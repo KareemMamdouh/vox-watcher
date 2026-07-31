@@ -1,6 +1,12 @@
 {
-  "seeded": false,
-  "seen": [],
+  "seeded": true,
+  "seen": [
+    "20260801",
+    "20260802",
+    "20260803",
+    "20260804",
+    "20260805"
+  ],
   "consecutiveFailures": 0,
   "failureAlertSent": false,
   "lastError": null
