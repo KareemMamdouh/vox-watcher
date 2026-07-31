@@ -68,18 +68,43 @@ function buildFixture(dates) {
 const today = cairoToday();
 const seedDates = [1, 2, 3, 4, 5].map((n) => addDays(today, n));
 const nextDate = addDays(today, 6);
+const laterDate = addDays(today, 7);
 
 let servedDates = seedDates;
 const sent = [];
+let pendingUpdates = [];
+let acknowledgedOffset = null;
 
 const server = createServer((req, res) => {
+  const json = (payload) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  };
+
   if (req.method === 'POST' && req.url.includes('/sendMessage')) {
     let body = '';
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
       sent.push(JSON.parse(body));
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{"ok":true}');
+      json({ ok: true, result: {} });
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && req.url.includes('/getUpdates')) {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      const params = JSON.parse(body);
+      // An offset is Telegram's acknowledgement protocol: everything below
+      // it is confirmed handled and dropped server-side.
+      if (params.offset !== undefined) {
+        acknowledgedOffset = params.offset;
+        pendingUpdates = [];
+        json({ ok: true, result: [] });
+        return;
+      }
+      json({ ok: true, result: pendingUpdates });
     });
     return;
   }
@@ -105,7 +130,7 @@ const base = `http://127.0.0.1:${server.address().port}`;
 
 // Must be async: spawnSync would block this process's event loop, and the
 // stand-in server lives here, so the child's fetch would never be answered.
-function run(path) {
+function run(path, extraEnv = {}) {
   sent.length = 0;
 
   return new Promise((done, fail) => {
@@ -119,6 +144,7 @@ function run(path) {
           TELEGRAM_API_BASE: base,
           TELEGRAM_BOT_TOKEN: 'test-token',
           TELEGRAM_CHAT_ID: 'test-chat',
+          ...extraEnv,
         },
       },
     );
@@ -129,6 +155,36 @@ function run(path) {
     child.on('error', fail);
     child.on('close', (code) => done({ code, stdout, messages: [...sent] }));
   });
+}
+
+const RESPONDER = resolve(REPO_ROOT, 'scripts/respond.mjs');
+
+function runResponder() {
+  sent.length = 0;
+  acknowledgedOffset = null;
+
+  return new Promise((done, fail) => {
+    const child = spawn(process.execPath, [RESPONDER], {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        TELEGRAM_API_BASE: base,
+        TELEGRAM_BOT_TOKEN: 'test-token',
+        TELEGRAM_CHAT_ID: 'test-chat',
+        TARGET_URL: `${base}/page`,
+      },
+    });
+
+    let stdout = '';
+    child.stdout.on('data', (chunk) => (stdout += chunk));
+    child.stderr.on('data', (chunk) => (stdout += chunk));
+    child.on('error', fail);
+    child.on('close', (code) => done({ code, stdout, messages: [...sent] }));
+  });
+}
+
+function update(id, chat, text) {
+  return { update_id: id, message: { message_id: id, chat: { id: chat, type: 'private' }, text } };
 }
 
 const state = () => JSON.parse(readFileSync(STATE_PATH, 'utf8'));
@@ -246,6 +302,69 @@ console.log('11. Past dates are pruned from seen');
 
   await run('/page');
   check('stale date dropped', state().seen.includes('20200101'), false);
+}
+
+console.log('12. HEARTBEAT=on reports in on every run');
+{
+  const on = { HEARTBEAT: 'on' };
+
+  const quiet = await run('/page', on);
+  check('heartbeat sent when nothing is new', quiet.messages.length, 1);
+  check('says alive', quiet.messages[0]?.text.includes('alive'), true);
+  check('reports how far booking runs', quiet.messages[0]?.text.includes(formatYmd(seedDates[4])), true);
+
+  servedDates = [...seedDates, nextDate, laterDate];
+  const found = await run('/page', on);
+  check('new date sends one message, not two', found.messages.length, 1);
+  check('and it is the alert, not the heartbeat', found.messages[0]?.text.includes('New booking date'), true);
+  servedDates = seedDates;
+
+  const broken = await run('/does-not-exist', on);
+  check('failure still reports in', broken.messages.length, 1);
+  check('and says it failed', broken.messages[0]?.text.includes('FAILED'), true);
+
+  const recovered = await run('/page', on);
+  check('no duplicate recovery message', recovered.messages.length, 1);
+  check('back to a normal heartbeat', recovered.messages[0]?.text.includes('nothing new'), true);
+}
+
+console.log('13. HEARTBEAT=off stays silent (default)');
+{
+  const r = await run('/page');
+  check('no heartbeat', r.messages.length, 0);
+}
+
+console.log('14. /check responder');
+{
+  pendingUpdates = [update(101, 'test-chat', '/check')];
+  const r = await runResponder();
+  check('exit code', r.code, 0);
+  check('replied once', r.messages.length, 1);
+  check('reply is a status', r.messages[0]?.text.includes('VOX watcher status'), true);
+  check('includes live booking range', r.messages[0]?.text.includes(formatYmd(seedDates[4])), true);
+  check('acknowledged the update', acknowledgedOffset, 102);
+
+  const empty = await runResponder();
+  check('nothing pending means no reply', empty.messages.length, 0);
+}
+
+console.log('15. Responder ignores strangers and non-commands');
+{
+  pendingUpdates = [update(201, 'someone-else', '/check')];
+  const stranger = await runResponder();
+  check('no reply to another chat', stranger.messages.length, 0);
+  check('still acknowledged', acknowledgedOffset, 202);
+
+  pendingUpdates = [update(301, 'test-chat', 'hello there')];
+  const chatter = await runResponder();
+  check('no reply to plain text', chatter.messages.length, 0);
+
+  pendingUpdates = [
+    update(401, 'test-chat', '/check'),
+    update(402, 'test-chat', '/check@Voxmovesbot'),
+  ];
+  const repeated = await runResponder();
+  check('one reply per batch however many asks', repeated.messages.length, 1);
 }
 
 server.close();

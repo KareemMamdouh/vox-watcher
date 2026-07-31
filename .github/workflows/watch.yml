@@ -26,12 +26,15 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Check for new booking dates
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Report in on every run so silence means something is broken.
+          # Set to 'off' for alert-only, which is far less chatty.
+          HEARTBEAT: 'on'
         run: node scripts/watcher.mjs
 
       # always(): a failed check still needs its failure counter persisted,

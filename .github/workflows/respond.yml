@@ -1,0 +1,35 @@
+name: respond
+
+# Answers /check. Actions cannot hold a Telegram long-poll connection, so
+# this polls for commands instead. Reply latency is one cycle, plus whatever
+# delay GitHub adds.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+# Read-only: this workflow never writes state, the update cursor lives on
+# Telegram's side.
+permissions:
+  contents: read
+
+concurrency:
+  group: respond
+  cancel-in-progress: false
+
+jobs:
+  respond:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Answer any pending /check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node scripts/respond.mjs

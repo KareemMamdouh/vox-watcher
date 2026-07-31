@@ -4,23 +4,18 @@ Polls the [VOX Cinemas page for The Odyssey](https://egy.voxcinemas.com/movies/t
 every 30 minutes and sends a Telegram message when a new booking date opens.
 Silent otherwise.
 
-## Do this first
+## Does this even work from GitHub?
 
-Before trusting any of this, confirm a GitHub-hosted runner can actually reach
-the page. The site is behind Akamai, and the header set below was only ever
-verified from a residential Egyptian IP. GitHub runners come from Azure
-datacenter ranges in the US and EU, which may be geo-blocked or bot-blocked.
+Yes, verified 31 Jul 2026. The open question at the outset was whether Akamai
+would block GitHub's Azure datacenter egress, since the browser header set had
+only ever been tested from a residential Egyptian IP. The `probe` workflow
+settled it: a GitHub-hosted runner gets a 200 and parses the dates correctly.
 
-The `probe` workflow answers this. It runs automatically on the first push to
-`main`, and can be re-run from the Actions tab.
-
-- **Probe passes** → the approach is viable. Add the secrets below and you are done.
-- **Probe fails** → no amount of application code fixes it. The watcher needs a
-  host with Egyptian residential egress instead: a Raspberry Pi, an old laptop,
-  or a VPS with an Egyptian exit. All the logic in `scripts/` runs unchanged
-  under cron on such a host; only the workflow files become irrelevant.
-
-Once the question is settled, delete `.github/workflows/probe.yml`.
+If that ever changes, the symptom is repeated failures with timeouts or 403s.
+No application change fixes that. Move to a host with Egyptian residential
+egress — a Raspberry Pi, an old laptop, or a VPS with an Egyptian exit.
+Everything in `scripts/` runs unchanged under cron on such a host; only the
+workflow files become irrelevant.
 
 ## Setup
 
@@ -38,6 +33,48 @@ Once the question is settled, delete `.github/workflows/probe.yml`.
    back to the repo.
 
 3. The first scheduled run seeds silently. The second run onward will alert.
+
+## Workflows
+
+| Workflow      | Cadence | What it does                                    |
+| ------------- | ------- | ----------------------------------------------- |
+| `watch.yml`   | 30 min  | Checks for new dates, alerts, sends the heartbeat |
+| `respond.yml` | 5 min   | Answers `/check`                                  |
+
+## Heartbeat
+
+`watch.yml` sets `HEARTBEAT: 'on'`, so every run reports in — roughly 48
+messages a day. The point is that silence then means something is broken,
+rather than meaning no news.
+
+The tradeoff is real: a message every half hour trains you to ignore the bot,
+which is exactly when the alert you actually care about slips past. Set
+`HEARTBEAT: 'off'` in the workflow for the quieter design, where nothing is
+sent unless a date opens or the watcher has been failing for ~3h.
+
+With the heartbeat on, the failure-escalation and recovery messages are
+skipped, since every heartbeat already carries that status.
+
+## The /check command
+
+Send `/check` (or `/status`) to the bot and it replies with a live status: how
+far booking currently runs, whether anything is pending an alert, and any
+recent failures.
+
+Expect a reply within about 5–15 minutes, not instantly. Actions cannot hold a
+Telegram long-poll connection, so `respond.yml` inverts the usual bot model: on
+a schedule it asks Telegram whether any commands arrived, and replies if so.
+Nothing is listening in between.
+
+No offset state is stored anywhere. Calling `getUpdates` with an offset tells
+Telegram those updates are handled and it drops them, so the cursor lives on
+their side and `respond.yml` stays read-only. It only answers the chat in
+`TELEGRAM_CHAT_ID`, so a stranger who finds the bot cannot use it as a scraper.
+
+For a genuinely instant `/check` you need something always on: either a small
+relay (Cloudflare Worker taking a Telegram webhook and firing
+`repository_dispatch`) or the Pi/VPS option, where a normal long-poll bot
+replies in a second.
 
 ## How it works
 
@@ -87,19 +124,24 @@ storm.
   counts as a failure, not as "no dates".
 - `seen` is never written on a failed fetch. Overwriting it would fire a
   duplicate alert storm the moment the site recovered.
-- After 6 consecutive failures (~3h) one "watcher is failing" alert goes out,
-  then it stays quiet until it recovers. A silently broken watcher otherwise
-  looks exactly like "no news yet".
+- With `HEARTBEAT: 'off'`, six consecutive failures (~3h) trigger one "watcher
+  is failing" alert, then silence until it recovers. A silently broken watcher
+  otherwise looks exactly like "no news yet". With the heartbeat on this is
+  skipped, because every run already reports its own failure.
 - A date is only added to `seen` once Telegram confirms the send, so a Telegram
   outage delays an alert rather than swallowing it.
 
 ## Local use
 
 ```bash
-npm test              # 37 assertions, no network, ~4s
+npm test              # 59 assertions, no network, ~6s
 npm run probe         # can this machine reach the page?
 npm run watch:dry     # real fetch, prints what it would send, writes nothing
 ```
+
+The test suite stands up a local server impersonating both the VOX page and
+the Telegram API, so the real fetch and send paths run end to end rather than
+being stubbed.
 
 Handy flags:
 
@@ -114,10 +156,9 @@ No dependencies. Node 20+ for built-in `fetch` and `AbortSignal.timeout`.
 ## Caveats
 
 GitHub's cron is best-effort. Delays of 5–20 minutes are routine and runs are
-occasionally skipped under platform load, so this is not a true 30-minute
-guarantee. `workflow_dispatch` is enabled for on-demand checks, since a
-scheduled job cannot hold a Telegram long-poll connection for a `/check`
-command.
+occasionally skipped under platform load, so neither the 30-minute check nor
+the 5-minute `/check` poll is a guarantee. Every workflow also has
+`workflow_dispatch`, so you can force any of them from the Actions tab.
 
 A public repo gets unlimited free Actions minutes. Private would use roughly
 1,440 min/month at this cadence, against a 2,000 minute free allowance.

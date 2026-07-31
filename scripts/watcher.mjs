@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_URL,
   MIN_BODY_BYTES,
+  cairoNow,
   cairoToday,
   fetchPage,
   formatYmd,
@@ -22,6 +23,12 @@ import {
 
 // Roughly 3h at a 30 minute cadence.
 const FAILURE_ALERT_THRESHOLD = 6;
+
+// With HEARTBEAT=on every run reports in, so silence means something is
+// wrong. That makes the "6 failures in a row" escalation and the recovery
+// notice redundant, and those are skipped. Default off keeps the original
+// alert-only behaviour.
+const HEARTBEAT = (process.env.HEARTBEAT ?? 'off').toLowerCase() === 'on';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -156,6 +163,47 @@ function buildFailureMessage(state, url) {
   ].join('\n');
 }
 
+function buildHeartbeatMessage(url, dates) {
+  const newest = dates[dates.length - 1];
+
+  return [
+    `VOX watcher alive - ${cairoNow()}`,
+    '',
+    'Checked, nothing new.',
+    `Booking runs through ${formatYmd(newest)} (${dates.length} dates open).`,
+    '',
+    showtimesLink(url, newest),
+  ].join('\n');
+}
+
+function buildHeartbeatFailureMessage(state, dates) {
+  const lines = [
+    `VOX watcher alive - ${cairoNow()}`,
+    '',
+    `Check FAILED: ${state.lastError}`,
+    `${state.consecutiveFailures} in a row.`,
+  ];
+
+  if (dates.length) {
+    lines.push('', `Last known booking through ${formatYmd(dates[dates.length - 1])}.`);
+  }
+
+  return lines.join('\n');
+}
+
+function buildSeedMessage(url, dates) {
+  const newest = dates[dates.length - 1];
+
+  return [
+    `VOX watcher started - ${cairoNow()}`,
+    '',
+    `Now tracking ${dates.length} open dates, through ${formatYmd(newest)}.`,
+    'You will get a message when a new date opens.',
+    '',
+    showtimesLink(url, newest),
+  ].join('\n');
+}
+
 function buildRecoveryMessage(dates) {
   const newest = dates[dates.length - 1];
 
@@ -219,7 +267,9 @@ async function main() {
 
     console.log(`FAIL: ${failureReason} (${state.consecutiveFailures} in a row)`);
 
-    if (state.consecutiveFailures >= FAILURE_ALERT_THRESHOLD && !state.failureAlertSent) {
+    if (HEARTBEAT) {
+      await sendTelegram(buildHeartbeatFailureMessage(state, state.seen), options);
+    } else if (state.consecutiveFailures >= FAILURE_ALERT_THRESHOLD && !state.failureAlertSent) {
       const sent = await sendTelegram(buildFailureMessage(state, options.url), options);
       if (sent) state.failureAlertSent = true;
     }
@@ -229,7 +279,8 @@ async function main() {
   }
 
   // --- success path -----------------------------------------------------
-  if (state.failureAlertSent) {
+  // A heartbeat every run already reports recovery implicitly.
+  if (!HEARTBEAT && state.failureAlertSent) {
     await sendTelegram(buildRecoveryMessage(dates), options);
   }
 
@@ -247,7 +298,11 @@ async function main() {
     state.seeded = true;
     state.seen = current;
     saveState(options.statePath, state, options);
-    console.log(`Seeded with ${current.length} dates. No alert sent (first run).`);
+    console.log(`Seeded with ${current.length} dates.`);
+
+    if (HEARTBEAT) {
+      await sendTelegram(buildSeedMessage(options.url, current), options);
+    }
     return 0;
   }
 
@@ -258,6 +313,10 @@ async function main() {
     state.seen = state.seen.filter((date) => date >= today);
     saveState(options.statePath, state, options);
     console.log('No new dates.');
+
+    if (HEARTBEAT) {
+      await sendTelegram(buildHeartbeatMessage(options.url, current), options);
+    }
     return 0;
   }
 

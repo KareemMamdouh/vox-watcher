@@ -10,6 +10,7 @@
   "scripts": {
     "watch": "node scripts/watcher.mjs",
     "watch:dry": "node scripts/watcher.mjs --dry-run",
+    "respond": "node scripts/respond.mjs",
     "probe": "node scripts/probe-fetch.mjs",
     "test": "node test/acceptance.mjs"
   }

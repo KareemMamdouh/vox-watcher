@@ -119,6 +119,18 @@ export function cairoToday() {
   return parts.replaceAll('-', '');
 }
 
+export function cairoNow() {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Cairo',
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date());
+}
+
 export function formatYmd(value) {
   const date = new Date(
     Date.UTC(
