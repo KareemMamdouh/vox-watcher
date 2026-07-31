@@ -26,8 +26,8 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMMANDS = ['/check', '/status'];
 
 const url = process.env.TARGET_URL || DEFAULT_URL;
-const token = process.env.TELEGRAM_BOT_TOKEN;
-const chatId = process.env.TELEGRAM_CHAT_ID;
+const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
 const apiBase = process.env.TELEGRAM_API_BASE || 'https://api.telegram.org';
 
 async function telegram(method, params) {
@@ -116,6 +116,19 @@ if (updates.length === 0) {
   });
 
   console.log(`${updates.length} update(s), ${asked.length} command(s) for this chat.`);
+
+  // A chat id secret that does not match the sender silently swallows every
+  // command, so say so rather than exiting quietly.
+  if (asked.length === 0) {
+    const senders = [...new Set(updates.map((u) => String(u.message?.chat?.id)))];
+    const matches = senders.includes(String(chatId));
+    // Masked: Actions logs on a public repo are world-readable.
+    const mask = (id) => (id.length > 5 ? `${id.slice(0, 3)}***${id.slice(-2)}` : '***');
+    console.log(`Senders: ${senders.map(mask).join(', ')} | configured: ${mask(String(chatId))}`);
+    if (!matches) {
+      console.warn('WARNING: no update came from the configured TELEGRAM_CHAT_ID.');
+    }
+  }
 
   // One reply per batch, however many times it was asked.
   if (asked.length > 0) {

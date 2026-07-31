@@ -74,6 +74,7 @@ let servedDates = seedDates;
 const sent = [];
 let pendingUpdates = [];
 let acknowledgedOffset = null;
+let rejectSends = false;
 
 const server = createServer((req, res) => {
   const json = (payload) => {
@@ -85,6 +86,11 @@ const server = createServer((req, res) => {
     let body = '';
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
+      if (rejectSends) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end('{"ok":false,"error_code":401,"description":"Unauthorized"}');
+        return;
+      }
       sent.push(JSON.parse(body));
       json({ ok: true, result: {} });
     });
@@ -332,6 +338,32 @@ console.log('13. HEARTBEAT=off stays silent (default)');
 {
   const r = await run('/page');
   check('no heartbeat', r.messages.length, 0);
+}
+
+console.log('13b. A rejected send turns the run red');
+{
+  // A green run that delivered nothing looks identical to a healthy quiet
+  // one, which is the whole failure mode this watcher exists to catch.
+  rejectSends = true;
+
+  const heartbeat = await run('/page', { HEARTBEAT: 'on' });
+  check('heartbeat rejection is a failure', heartbeat.code, 1);
+  check('and it is logged', heartbeat.stdout.includes('Telegram send failed'), true);
+
+  const missing = await run('/page', { HEARTBEAT: 'on', TELEGRAM_BOT_TOKEN: '' });
+  check('missing credentials is a failure', missing.code, 1);
+
+  rejectSends = false;
+  const fine = await run('/page', { HEARTBEAT: 'on' });
+  check('healthy send is green again', fine.code, 0);
+}
+
+console.log('13c. Secrets with stray whitespace still work');
+{
+  const r = await run('/page', { HEARTBEAT: 'on', TELEGRAM_CHAT_ID: '  test-chat\n' });
+  check('trimmed and delivered', r.messages.length, 1);
+  check('addressed correctly', r.messages[0]?.chat_id, 'test-chat');
+  check('exit code', r.code, 0);
 }
 
 console.log('14. /check responder');

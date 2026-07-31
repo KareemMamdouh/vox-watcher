@@ -87,11 +87,18 @@ function saveState(path, state, { dryRun }) {
   writeFileSync(path, `${JSON.stringify(canonical, null, 2)}\n`);
 }
 
+// Any send that does not land must turn the run red. A green run that
+// delivered nothing is indistinguishable from a healthy quiet one, which is
+// the exact failure this watcher exists to catch.
+let deliveryFailed = false;
+
 // No parse_mode: the API rejects the whole send on any unescaped special
 // character, and a missed alert is worse than unformatted text.
 async function sendTelegram(text, { dryRun }) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  // Trimmed: a secret pasted with a trailing newline is otherwise a 404 on
+  // the bot path or a "chat not found", with nothing obvious in the log.
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
 
   if (dryRun) {
     console.log('[dry-run] would send:\n---\n' + text + '\n---');
@@ -101,6 +108,7 @@ async function sendTelegram(text, { dryRun }) {
   if (!token || !chatId) {
     console.error('TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set. Message not sent:');
     console.error('---\n' + text + '\n---');
+    deliveryFailed = true;
     return false;
   }
 
@@ -118,6 +126,7 @@ async function sendTelegram(text, { dryRun }) {
 
     if (!response.ok) {
       console.error(`Telegram send failed: HTTP ${response.status} ${await response.text()}`);
+      deliveryFailed = true;
       return false;
     }
 
@@ -125,6 +134,7 @@ async function sendTelegram(text, { dryRun }) {
     return true;
   } catch (error) {
     console.error(`Telegram send failed: ${error.name}: ${error.message}`);
+    deliveryFailed = true;
     return false;
   }
 }
@@ -223,6 +233,19 @@ async function main() {
   console.log(`URL         : ${options.url}`);
   console.log(`Today Cairo : ${today}`);
   console.log(`Seen        : ${state.seen.length ? state.seen.join(', ') : '(empty)'}`);
+
+  // Lengths only. Actions logs on a public repo are world-readable, so the
+  // values themselves must never be printed.
+  const rawToken = process.env.TELEGRAM_BOT_TOKEN ?? '';
+  const rawChat = process.env.TELEGRAM_CHAT_ID ?? '';
+  console.log(
+    `Telegram    : token ${rawToken ? `set (${rawToken.length} chars)` : 'MISSING'}, ` +
+      `chat id ${rawChat ? `set (${rawChat.length} chars)` : 'MISSING'}, ` +
+      `heartbeat ${HEARTBEAT ? 'on' : 'off'}`,
+  );
+  if (rawToken !== rawToken.trim() || rawChat !== rawChat.trim()) {
+    console.warn('WARNING: a Telegram secret has surrounding whitespace, trimming it.');
+  }
 
   // --- fetch ------------------------------------------------------------
   let page;
@@ -335,4 +358,5 @@ async function main() {
   return sent ? 0 : 1;
 }
 
-process.exitCode = await main();
+const exitCode = await main();
+process.exitCode = exitCode || (deliveryFailed ? 1 : 0);
