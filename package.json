@@ -1,0 +1,16 @@
+{
+  "name": "vox-watcher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Watches the VOX Cinemas showtimes date strip and alerts on Telegram when a new booking date opens.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "watch": "node scripts/watcher.mjs",
+    "watch:dry": "node scripts/watcher.mjs --dry-run",
+    "probe": "node scripts/probe-fetch.mjs",
+    "test": "node test/acceptance.mjs"
+  }
+}

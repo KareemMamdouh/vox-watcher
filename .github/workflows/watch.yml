@@ -1,0 +1,52 @@
+name: watch
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub's cron is best-effort: 5-20 minutes late is
+    # routine and runs are occasionally skipped under load. Fine here, but
+    # it is not a 30 minute guarantee.
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+# Needed to commit state.json back to the repo.
+permissions:
+  contents: write
+
+# Two runs racing to push state would clobber each other.
+concurrency:
+  group: watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check for new booking dates
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node scripts/watcher.mjs
+
+      # always(): a failed check still needs its failure counter persisted,
+      # otherwise the "watcher is failing" alert can never trigger.
+      - name: Commit state
+        if: always()
+        run: |
+          if [ -z "$(git status --porcelain -- state.json)" ]; then
+            echo "state.json unchanged, nothing to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          # [skip ci] so committing state does not retrigger anything.
+          git commit -m "chore: update watcher state [skip ci]"
+          git push || (git pull --rebase --autostash && git push)

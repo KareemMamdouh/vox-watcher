@@ -1,0 +1,103 @@
+name: probe
+
+# Throwaway diagnostic: can a GitHub-hosted runner reach the VOX page at all?
+# Akamai may geo-block or bot-block Azure datacenter IPs. If this does not
+# report 200, no amount of application code fixes it and the watcher needs to
+# run from a host with an Egyptian residential egress instead.
+#
+# Runs on push so the answer arrives immediately, plus on demand.
+# Delete this workflow once the question is settled.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TARGET_URL: https://egy.voxcinemas.com/movies/the-odyssey
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Runner egress IP and geo
+        run: |
+          echo "Where this runner appears to be coming from:"
+          curl -sS --max-time 15 https://ipinfo.io/json || echo "(ipinfo lookup failed)"
+
+      - name: Fetch via curl with browser headers
+        id: curl_probe
+        run: |
+          echo "--- curl ---"
+          # No -f: we want the status code even on 403, not a hard exit.
+          # A stall (Akamai's tell for clients it dislikes) trips --max-time.
+          if ! result=$(curl -sS --compressed --max-time 45 -o /tmp/vox.html \
+            -w '%{http_code} %{time_total} %{size_download}' \
+            -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' \
+            -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8' \
+            -H 'Accept-Language: en-US,en;q=0.9' \
+            -H 'sec-ch-ua: "Chromium";v="126", "Not.A/Brand";v="24"' \
+            -H 'sec-ch-ua-mobile: ?0' \
+            -H 'sec-ch-ua-platform: "macOS"' \
+            -H 'Sec-Fetch-Dest: document' \
+            -H 'Sec-Fetch-Mode: navigate' \
+            -H 'Sec-Fetch-Site: none' \
+            -H 'Sec-Fetch-User: ?1' \
+            -H 'Upgrade-Insecure-Requests: 1' \
+            "$TARGET_URL"); then
+            echo "curl exited non-zero - almost certainly a stall/timeout, which is exactly how Akamai treats clients it does not like."
+            echo "curl_ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          set -- $result
+          echo "HTTP status : $1"
+          echo "Time        : $2 s"
+          echo "Body size   : $3 bytes"
+
+          if [ "$1" = "200" ]; then
+            echo "curl_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "curl_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Show what came back
+        if: always()
+        run: |
+          if [ ! -s /tmp/vox.html ]; then
+            echo "No body was written."
+            exit 0
+          fi
+          echo "--- first 400 chars ---"
+          head -c 400 /tmp/vox.html
+          echo ""
+          echo ""
+          echo "--- booking dates found in the date strip ---"
+          # Entity-encoded in the raw response: ?d&#x3D;YYYYMMDD
+          grep -o '[?&]d&#x3D;[0-9]\{8\}' /tmp/vox.html | grep -o '[0-9]\{8\}' | sort -u \
+            || echo "(none found - either blocked, or the markup changed)"
+
+      - name: Fetch via Node (the runtime the watcher actually uses)
+        if: always()
+        continue-on-error: true
+        run: |
+          node --version
+          node scripts/probe-fetch.mjs
+
+      - name: Verdict
+        if: always()
+        run: |
+          if [ "${{ steps.curl_probe.outputs.curl_ok }}" = "true" ]; then
+            echo "PASS - a GitHub-hosted runner can reach the page. The Actions approach is viable."
+          else
+            echo "FAIL - this runner cannot reach the page."
+            echo "Risk #1 is confirmed: Akamai is blocking GitHub's datacenter egress."
+            echo "The watcher needs a host with an Egyptian residential IP instead."
+            exit 1
+          fi
