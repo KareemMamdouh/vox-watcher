@@ -6,7 +6,7 @@
     "20260804",
     "20260805"
   ],
-  "consecutiveFailures": 1,
+  "consecutiveFailures": 0,
   "failureAlertSent": false,
-  "lastError": "HTTP 403"
+  "lastError": null
 }
