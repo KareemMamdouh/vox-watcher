@@ -1,7 +1,8 @@
 // Fetching and parsing for the VOX Cinemas showtimes date strip.
 // Shared by the watcher and the connectivity probe.
 
-export const DEFAULT_URL = 'https://egy.voxcinemas.com/movies/the-odyssey';
+export const DEFAULT_URL =
+  'https://egy.voxcinemas.com/showtimes?c=city-centre-almaza&m=the-odyssey';
 
 // Anything smaller than this is an Akamai interstitial or an error page,
 // never a real listing. Treat it as a failed fetch, not as "no dates".

@@ -147,7 +147,7 @@ function buildNewDatesMessage(url, newDates, allDates) {
   const newest = allDates[allDates.length - 1];
 
   return [
-    'New booking date open - The Odyssey (VOX Egypt)',
+    'New booking date open - The Odyssey @ City Centre Almaza',
     '',
     newDates.length === 1 ? 'Newly opened:' : `Newly opened (${newDates.length}):`,
     ...newDates.map((date) => `  ${formatYmd(date)}`),

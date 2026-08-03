@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 env:
-  TARGET_URL: https://egy.voxcinemas.com/movies/the-odyssey
+  TARGET_URL: https://egy.voxcinemas.com/showtimes?c=city-centre-almaza&m=the-odyssey
 
 jobs:
   probe:

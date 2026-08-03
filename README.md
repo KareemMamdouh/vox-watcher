@@ -1,6 +1,6 @@
 # vox-watcher
 
-Polls the [VOX Cinemas page for The Odyssey](https://egy.voxcinemas.com/movies/the-odyssey)
+Polls [The Odyssey at City Centre Almaza](https://egy.voxcinemas.com/showtimes?c=city-centre-almaza&m=the-odyssey)
 every 30 minutes and sends a Telegram message when a new booking date opens.
 Silent otherwise.
 
@@ -147,7 +147,7 @@ Handy flags:
 
 ```bash
 node scripts/watcher.mjs --dry-run
-node scripts/watcher.mjs --url=https://egy.voxcinemas.com/movies/some-other-film
+node scripts/watcher.mjs --url='https://egy.voxcinemas.com/showtimes?c=city-centre-almaza&m=some-other-film'
 node scripts/watcher.mjs --state=tmp-scratch.json
 ```
 
