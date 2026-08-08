@@ -8,7 +8,7 @@ export const DEFAULT_URL =
 // never a real listing. Treat it as a failed fetch, not as "no dates".
 export const MIN_BODY_BYTES = 2000;
 
-export const FETCH_TIMEOUT_MS = 30_000;
+export const FETCH_TIMEOUT_MS = 30_000000;
 
 // The site is behind Akamai and stalls clients that do not look like a
 // browser. A bare request hangs until timeout rather than erroring cleanly.
